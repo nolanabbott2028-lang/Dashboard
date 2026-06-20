@@ -1,16 +1,25 @@
-// Shared helpers for the Fitbit OAuth 2.0 serverless functions (Vercel, Node runtime).
-// The client secret lives only here (server-side, from env). Tokens are kept in
-// httpOnly cookies — never exposed to the browser. No database required.
+// Shared helpers for the Fitbit (Google Health API) OAuth 2.0 serverless functions.
 //
-// Fitbit uses OAuth 2.0 Authorization Code grant with HTTP Basic auth on the
-// token endpoint (client_id:client_secret base64). Refresh tokens rotate on every
-// refresh, so we always persist the newest one.
+// As of 2026 Google closed new app registration on dev.fitbit.com and routes all
+// new Fitbit/Fitbit-Air integrations through the GOOGLE HEALTH API. So this "fitbit"
+// integration authenticates with Google (accounts.google.com) and reads data from
+// health.googleapis.com — NOT the legacy api.fitbit.com.
+//
+// The OAuth client (id + secret) is created in Google Cloud Console. The secret
+// lives only here (server-side, from env). Tokens are kept in httpOnly cookies —
+// never exposed to the browser. No database required.
 const crypto = require('crypto');
 
-const AUTH_URL = 'https://www.fitbit.com/oauth2/authorize';
-const TOKEN_URL = 'https://api.fitbit.com/oauth2/token';
-const API_BASE = 'https://api.fitbit.com';
-const SCOPE = 'sleep heartrate profile';
+const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+const TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const API_BASE = 'https://www.googleapis.com/health/v4';
+
+// Two restricted scopes cover sleep + the heart-rate metrics we read.
+// access_type=offline + prompt=consent are what make Google return a refresh token.
+const SCOPES = [
+  'https://www.googleapis.com/auth/googlehealth.sleep.readonly',
+  'https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly',
+].join(' ');
 
 function getOrigin(req) {
   const proto = String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
@@ -41,30 +50,27 @@ function clearCookie(name, secure) {
 
 function creds() {
   // .trim() guards against stray spaces / newlines pasted into the Vercel env var.
+  // We keep the FITBIT_* names so the rest of the suite + docs stay consistent,
+  // even though these are now Google Cloud OAuth client credentials.
   const id = (process.env.FITBIT_CLIENT_ID || '').trim();
   const secret = (process.env.FITBIT_CLIENT_SECRET || '').trim();
   if (!id || !secret) { const e = new Error('FITBIT_NOT_CONFIGURED'); e.code = 'FITBIT_NOT_CONFIGURED'; throw e; }
   return { id, secret };
 }
 
-// Fitbit's token endpoint authenticates the app with HTTP Basic (id:secret),
-// while authorization_code also needs client_id in the body.
-async function tokenRequest(params, id, secret) {
-  const basic = Buffer.from(id + ':' + secret).toString('base64');
+// Google's token endpoint takes client_id + client_secret in the form body.
+async function tokenRequest(params) {
   const r = await fetch(TOKEN_URL, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/x-www-form-urlencoded',
-      'Authorization': 'Basic ' + basic,
-    },
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(params).toString(),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
-    const msg = (j.errors && j.errors[0] && j.errors[0].message) || j.error_description || j.error || '';
+    const msg = j.error_description || j.error || '';
     const e = new Error('token ' + r.status + ' ' + msg); e.status = r.status; throw e;
   }
   return j;
 }
 
-module.exports = { crypto, AUTH_URL, TOKEN_URL, API_BASE, SCOPE, getOrigin, redirectUri, isHttps, parseCookies, cookie, clearCookie, creds, tokenRequest };
+module.exports = { crypto, AUTH_URL, TOKEN_URL, API_BASE, SCOPES, getOrigin, redirectUri, isHttps, parseCookies, cookie, clearCookie, creds, tokenRequest };
