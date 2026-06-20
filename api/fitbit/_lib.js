@@ -39,13 +39,16 @@ function parseCookies(req) {
 }
 function cookie(name, val, opts) {
   opts = opts || {};
-  let s = name + '=' + encodeURIComponent(val) + '; Path=/; HttpOnly; SameSite=Lax';
+  // Use SameSite=None for the state cookie so it survives the cross-site redirect
+  // back from accounts.google.com (required for Safari / iOS / Chrome on mobile).
+  const sameSite = opts.sameSite || 'None';
+  let s = name + '=' + encodeURIComponent(val) + '; Path=/; HttpOnly; SameSite=' + sameSite;
   if (opts.secure !== false) s += '; Secure';
   if (opts.maxAge != null) s += '; Max-Age=' + opts.maxAge;
   return s;
 }
 function clearCookie(name, secure) {
-  return name + '=; Path=/; HttpOnly; SameSite=Lax' + (secure !== false ? '; Secure' : '') + '; Max-Age=0';
+  return name + '=; Path=/; HttpOnly; SameSite=None' + (secure !== false ? '; Secure' : '') + '; Max-Age=0';
 }
 
 function creds() {
