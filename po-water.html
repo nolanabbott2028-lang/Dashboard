@@ -1112,6 +1112,14 @@ html, body {
   margin-bottom: max(0px, env(safe-area-inset-bottom));
 }
 </style>
-
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="sync.js"></script>
+<script>
+  initCloudSync({
+    appKey: 'dashboard:water',
+    syncedKeys: ['po_water_v1'],
+    onApplied: () => location.reload(),
+  });
+</script>
 </body>
 </html>

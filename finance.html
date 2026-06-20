@@ -3375,6 +3375,15 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 
 })();
 </script>
-
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="sync.js"></script>
+<script>
+  initCloudSync({
+    appKey: 'dashboard:finance',
+    syncedKeys: ['finance_active_tab', 'nw_currency'],
+    syncedPrefixes: ['nw:'],
+    onApplied: () => location.reload(),
+  });
+</script>
 </body>
 </html>

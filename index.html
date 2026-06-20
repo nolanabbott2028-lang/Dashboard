@@ -821,5 +821,15 @@ setInterval(updateHealthRings, 300000);
 tick(true);
 setInterval(()=>tick(false),5000);
 </script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="sync.js"></script>
+<script>
+  initCloudSync({
+    appKey: 'dashboard:index',
+    syncedKeys: ['goal_streak_v1'],
+    syncedPrefixes: ['goals:'],
+    onApplied: () => tick(true),
+  });
+</script>
 </body>
 </html>
