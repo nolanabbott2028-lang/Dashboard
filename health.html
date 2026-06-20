@@ -1014,5 +1014,376 @@ main {
 })();
 </script>
 
+<!-- ── Google Health / Fitbit Air widget ───────────────────────────────── -->
+<style>
+.ghealth-section { margin: 24px 0 0; }
+.ghealth-card {
+  background: rgba(255,255,255,0.04);
+  border-radius: 16px; padding: 18px 22px;
+  backdrop-filter: blur(24px) saturate(1.2);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  margin-bottom: 14px;
+}
+.ghealth-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px; gap: 10px;
+}
+.ghealth-title {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.18em;
+  text-transform: uppercase; color: #76746E;
+  display: flex; align-items: center; gap: 8px;
+}
+.ghealth-title::before { content:''; width:18px; height:1px; background:#76746E; opacity:0.6; }
+.ghealth-connect-btn {
+  background: linear-gradient(135deg, #4285F4, #34A853);
+  color: #fff; border: none; border-radius: 10px;
+  padding: 9px 16px; font-size: 12.5px; font-weight: 700;
+  cursor: pointer; font-family: inherit;
+  box-shadow: 0 4px 14px rgba(66,133,244,0.35);
+  transition: opacity 0.2s, transform 0.15s;
+  white-space: nowrap;
+}
+.ghealth-connect-btn:hover { opacity: 0.88; transform: translateY(-1px); }
+.ghealth-disconnect-btn {
+  background: rgba(255,255,255,0.06); color: #76746E;
+  border: 1px solid rgba(255,255,255,0.10); border-radius: 10px;
+  padding: 7px 12px; font-size: 11px; font-weight: 600;
+  cursor: pointer; font-family: inherit; transition: color 0.2s;
+}
+.ghealth-disconnect-btn:hover { color: #FF6B6B; }
+
+.ghealth-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.ghealth-stat {
+  background: rgba(255,255,255,0.035);
+  border-radius: 12px; padding: 14px 16px;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.ghealth-stat-label {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.14em;
+  text-transform: uppercase; color: #76746E; margin-bottom: 6px;
+}
+.ghealth-stat-value {
+  font-size: 26px; font-weight: 800; letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums; color: #FAFAFA; line-height: 1;
+}
+.ghealth-stat-unit {
+  font-size: 11px; font-weight: 600; color: #76746E; margin-left: 3px;
+}
+.ghealth-stat-sub {
+  font-size: 10.5px; color: #76746E; margin-top: 4px;
+}
+
+/* Sleep bar */
+.sleep-stages { display: flex; gap: 3px; height: 6px; border-radius: 3px; overflow: hidden; margin-top: 8px; }
+.sleep-stage-rem   { background: #818CF8; }
+.sleep-stage-deep  { background: #6BE3A4; }
+.sleep-stage-light { background: #F2C063; }
+.sleep-stage-wake  { background: rgba(255,255,255,0.15); }
+
+.sleep-legend { display: flex; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+.sleep-legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #76746E; }
+.sleep-legend-dot  { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+/* Readiness score ring */
+.readiness-wrap { display: flex; align-items: center; gap: 14px; }
+.readiness-ring-wrap { position: relative; width: 64px; height: 64px; flex-shrink: 0; }
+.readiness-ring-wrap svg { width: 100%; height: 100%; }
+.readiness-ring-label {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; font-weight: 800; color: #FAFAFA;
+}
+.readiness-info { flex: 1; }
+.readiness-status { font-size: 13px; font-weight: 700; color: #FAFAFA; margin-bottom: 3px; }
+.readiness-tip    { font-size: 11px; color: #76746E; line-height: 1.4; }
+
+.ghealth-loading { text-align: center; padding: 28px; color: #76746E; font-size: 13px; }
+.ghealth-error   { text-align: center; padding: 16px; color: #FF6B6B; font-size: 12px; }
+.ghealth-not-connected {
+  text-align: center; padding: 28px 16px;
+  color: #76746E; font-size: 13px; line-height: 1.6;
+}
+.ghealth-not-connected strong { color: #FAFAFA; display: block; margin-bottom: 6px; font-size: 15px; }
+</style>
+
+<div class="ghealth-section">
+  <div class="ghealth-card">
+    <div class="ghealth-header">
+      <div class="ghealth-title">Fitbit Air · Google Health</div>
+      <div id="ghealthHeaderActions"></div>
+    </div>
+    <div id="ghealthBody"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const CLIENT_ID    = '1055570996751-tjluflqiu01k83dush5pecg9gg7mil60.apps.googleusercontent.com';
+  const REDIRECT_URI = 'https://dashboard-izvod3c2v-nolanabbott2028-langs-projects.vercel.app/fitbit-callback.html';
+  const SCOPES = [
+    'https://www.googleapis.com/auth/fitness.activity.read',
+    'https://www.googleapis.com/auth/fitness.sleep.read',
+    'https://www.googleapis.com/auth/fitness.heart_rate.read',
+    'https://www.googleapis.com/auth/fitness.body.read',
+    'https://www.googleapis.com/auth/fitness.oxygen_saturation.read',
+  ].join(' ');
+
+  const bodyEl    = document.getElementById('ghealthBody');
+  const actionsEl = document.getElementById('ghealthHeaderActions');
+
+  function getToken() {
+    const token  = localStorage.getItem('ghealth_token');
+    const expiry = parseInt(localStorage.getItem('ghealth_token_expiry') || '0');
+    if (token && Date.now() < expiry) return token;
+    return null;
+  }
+
+  function connect() {
+    const url = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams({
+      client_id:     CLIENT_ID,
+      redirect_uri:  REDIRECT_URI,
+      response_type: 'token',
+      scope:         SCOPES,
+      prompt:        'consent',
+    });
+    window.location.href = url;
+  }
+
+  function disconnect() {
+    localStorage.removeItem('ghealth_token');
+    localStorage.removeItem('ghealth_token_expiry');
+    render();
+  }
+
+  // ── Google Fitness REST API helpers ──────────────────────────────────────
+  async function fitGet(path, token) {
+    const r = await fetch('https://www.googleapis.com/fitness/v1' + path, {
+      headers: { Authorization: 'Bearer ' + token }
+    });
+    if (!r.ok) throw new Error('API ' + r.status);
+    return r.json();
+  }
+
+  function msNow()      { return Date.now(); }
+  function startOfDay() { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); }
+
+  async function fetchSteps(token) {
+    const body = {
+      aggregateBy: [{ dataTypeName: 'com.google.step_count.delta' }],
+      bucketByTime: { durationMillis: 86400000 },
+      startTimeMillis: startOfDay(),
+      endTimeMillis: msNow()
+    };
+    const r = await fetch('https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error('steps ' + r.status);
+    const d = await r.json();
+    let steps = 0;
+    (d.bucket || []).forEach(b => (b.dataset || []).forEach(ds =>
+      (ds.point || []).forEach(p => (p.value || []).forEach(v => { steps += v.intVal || 0; }))
+    ));
+    return steps;
+  }
+
+  async function fetchHeartRate(token) {
+    const body = {
+      aggregateBy: [{ dataTypeName: 'com.google.heart_rate.bpm' }],
+      bucketByTime: { durationMillis: 86400000 },
+      startTimeMillis: startOfDay(),
+      endTimeMillis: msNow()
+    };
+    const r = await fetch('https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error('hr ' + r.status);
+    const d = await r.json();
+    let avg = null, count = 0, sum = 0;
+    (d.bucket || []).forEach(b => (b.dataset || []).forEach(ds =>
+      (ds.point || []).forEach(p => (p.value || []).forEach(v => {
+        if (v.fpVal) { sum += v.fpVal; count++; }
+      }))
+    ));
+    if (count) avg = Math.round(sum / count);
+    return avg;
+  }
+
+  async function fetchSleep(token) {
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm   = String(today.getMonth()+1).padStart(2,'0');
+    const dd   = String(today.getDate()).padStart(2,'0');
+    const r = await fetch(
+      `https://www.googleapis.com/fitness/v1/users/me/sessions?activityType=72&startTime=${yyyy}-${mm}-${dd}T00:00:00Z&endTime=${yyyy}-${mm}-${dd}T23:59:59Z`,
+      { headers: { Authorization: 'Bearer ' + token } }
+    );
+    if (!r.ok) return null;
+    const d = await r.json();
+    const sessions = (d.session || []).filter(s => s.activityType === 72);
+    if (!sessions.length) return null;
+    const s = sessions[sessions.length - 1];
+    const durationMs = parseInt(s.endTimeMillis) - parseInt(s.startTimeMillis);
+    const hours = (durationMs / 3600000).toFixed(1);
+    return { hours, name: s.name || 'Sleep' };
+  }
+
+  async function fetchCalories(token) {
+    const body = {
+      aggregateBy: [{ dataTypeName: 'com.google.calories.expended' }],
+      bucketByTime: { durationMillis: 86400000 },
+      startTimeMillis: startOfDay(),
+      endTimeMillis: msNow()
+    };
+    const r = await fetch('https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    let cal = 0;
+    (d.bucket || []).forEach(b => (b.dataset || []).forEach(ds =>
+      (ds.point || []).forEach(p => (p.value || []).forEach(v => { cal += v.fpVal || 0; }))
+    ));
+    return Math.round(cal) || null;
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  function renderNotConnected() {
+    actionsEl.innerHTML = '';
+    const btn = document.createElement('button');
+    btn.className = 'ghealth-connect-btn';
+    btn.textContent = '🔗 Connect Fitbit Air';
+    btn.addEventListener('click', connect);
+    actionsEl.appendChild(btn);
+
+    bodyEl.innerHTML = `
+      <div class="ghealth-not-connected">
+        <strong>Connect your Fitbit Air</strong>
+        Tap the button above to link your Google Health account.<br>
+        Sleep, steps, heart rate, and calories will appear here.
+      </div>`;
+  }
+
+  function renderLoading() {
+    bodyEl.innerHTML = '<div class="ghealth-loading">Loading your health data…</div>';
+  }
+
+  function renderError(msg) {
+    bodyEl.innerHTML = `<div class="ghealth-error">${msg}</div>`;
+  }
+
+  function renderData(steps, hr, sleep, calories) {
+    actionsEl.innerHTML = '';
+    const dis = document.createElement('button');
+    dis.className = 'ghealth-disconnect-btn';
+    dis.textContent = 'Disconnect';
+    dis.addEventListener('click', disconnect);
+    actionsEl.appendChild(dis);
+
+    const stepsStr    = steps    != null ? steps.toLocaleString() : '—';
+    const hrStr       = hr       != null ? hr : '—';
+    const sleepStr    = sleep    != null ? sleep.hours : '—';
+    const calStr      = calories != null ? calories.toLocaleString() : '—';
+
+    // Simple readiness score based on available data
+    let readiness = 0, factors = 0;
+    if (sleep) { readiness += Math.min(100, (parseFloat(sleep.hours) / 8) * 100); factors++; }
+    if (steps != null) { readiness += Math.min(100, (steps / 10000) * 100); factors++; }
+    const score = factors ? Math.round(readiness / factors) : null;
+
+    let readinessColor = '#6BE3A4';
+    let readinessStatus = 'Ready to go';
+    let readinessTip = 'Your body is primed — push hard today.';
+    if (score != null) {
+      if (score < 40)      { readinessColor='#FF6B6B'; readinessStatus='Take it easy'; readinessTip='Low readiness — prioritize recovery today.'; }
+      else if (score < 65) { readinessColor='#F2C063'; readinessStatus='Moderate';     readinessTip='Medium readiness — a light workout is fine.'; }
+      else if (score < 85) { readinessColor='#6BE3A4'; readinessStatus='Good';          readinessTip='Solid readiness — go for it.'; }
+      else                 { readinessColor='#818CF8'; readinessStatus='Peak';           readinessTip='Peak condition — ideal day for a PR.'; }
+    }
+    const C = 2 * Math.PI * 24;
+    const offset = score != null ? C * (1 - score/100) : C;
+
+    bodyEl.innerHTML = `
+      <div class="ghealth-grid">
+
+        <div class="ghealth-stat" style="grid-column: span 2;">
+          <div class="ghealth-stat-label">Readiness</div>
+          <div class="readiness-wrap">
+            <div class="readiness-ring-wrap">
+              <svg viewBox="0 0 60 60">
+                <circle cx="30" cy="30" r="24" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="5"/>
+                <circle cx="30" cy="30" r="24" fill="none"
+                  stroke="${readinessColor}" stroke-width="5" stroke-linecap="round"
+                  transform="rotate(-90 30 30)"
+                  stroke-dasharray="${C.toFixed(2)}"
+                  stroke-dashoffset="${offset.toFixed(2)}"/>
+              </svg>
+              <div class="readiness-ring-label">${score != null ? score : '—'}</div>
+            </div>
+            <div class="readiness-info">
+              <div class="readiness-status">${readinessStatus}</div>
+              <div class="readiness-tip">${readinessTip}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ghealth-stat">
+          <div class="ghealth-stat-label">Sleep</div>
+          <div class="ghealth-stat-value">${sleepStr}<span class="ghealth-stat-unit">h</span></div>
+          <div class="ghealth-stat-sub">${sleep ? 'Last night' : 'No data yet'}</div>
+        </div>
+
+        <div class="ghealth-stat">
+          <div class="ghealth-stat-label">Heart Rate</div>
+          <div class="ghealth-stat-value">${hrStr}<span class="ghealth-stat-unit">bpm</span></div>
+          <div class="ghealth-stat-sub">Avg today</div>
+        </div>
+
+        <div class="ghealth-stat">
+          <div class="ghealth-stat-label">Steps</div>
+          <div class="ghealth-stat-value">${stepsStr}</div>
+          <div class="ghealth-stat-sub">Goal: 10,000</div>
+        </div>
+
+        <div class="ghealth-stat">
+          <div class="ghealth-stat-label">Calories</div>
+          <div class="ghealth-stat-value">${calStr}<span class="ghealth-stat-unit">kcal</span></div>
+          <div class="ghealth-stat-sub">Burned today</div>
+        </div>
+
+      </div>`;
+  }
+
+  async function render() {
+    const token = getToken();
+    if (!token) { renderNotConnected(); return; }
+
+    renderLoading();
+    try {
+      const [steps, hr, sleep, calories] = await Promise.all([
+        fetchSteps(token).catch(() => null),
+        fetchHeartRate(token).catch(() => null),
+        fetchSleep(token).catch(() => null),
+        fetchCalories(token).catch(() => null),
+      ]);
+      renderData(steps, hr, sleep, calories);
+    } catch (e) {
+      renderError('Could not load health data. Try disconnecting and reconnecting.');
+    }
+  }
+
+  render();
+})();
+</script>
+
 </body>
 </html>

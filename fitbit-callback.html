@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Connecting…</title>
+<style>
+  body { background: #050506; color: #FAFAFA; font-family: -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+  .msg { text-align: center; }
+  .msg h2 { font-size: 20px; margin-bottom: 8px; }
+  .msg p  { font-size: 13px; color: #76746E; }
+</style>
+</head>
+<body>
+<div class="msg">
+  <h2>Connecting to Google Health…</h2>
+  <p>You'll be redirected back to your dashboard in a moment.</p>
+</div>
+<script>
+  // Parse the access token from the URL hash (implicit flow)
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  const token      = params.get('access_token');
+  const expiresIn  = params.get('expires_in');
+
+  if (token) {
+    const expiry = Date.now() + (parseInt(expiresIn) || 3600) * 1000;
+    localStorage.setItem('ghealth_token', token);
+    localStorage.setItem('ghealth_token_expiry', expiry);
+  }
+
+  // Also handle authorization code flow (code in query string)
+  const qp = new URLSearchParams(window.location.search);
+  const code = qp.get('code');
+  if (code) {
+    localStorage.setItem('ghealth_auth_code', code);
+  }
+
+  setTimeout(() => { window.location.href = 'health.html'; }, 1000);
+</script>
+</body>
+</html>
