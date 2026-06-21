@@ -71,7 +71,10 @@ async function tokenRequest(params) {
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     const msg = j.error_description || j.error || '';
-    const e = new Error('token ' + r.status + ' ' + msg); e.status = r.status; throw e;
+    const e = new Error('token ' + r.status + ' ' + msg);
+    e.status = r.status;
+    e.detail = JSON.stringify(j, null, 2);
+    throw e;
   }
   return j;
 }

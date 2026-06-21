@@ -7,6 +7,18 @@ const CLIENT_SECRET = 'G0CSPX-bSHSlRKOghXCusq3lFsg2300r1dB';
 const FIXED_STATE = 'dashboard-fitbit-2026';
 const REDIRECT_URI = 'https://dashboard-one-mauve-25.vercel.app/api/fitbit/callback';
 
+function showError(res, title, detail) {
+  res.statusCode = 200;
+  res.setHeader('content-type', 'text/html');
+  res.end(`<!doctype html><meta charset="utf-8">
+<body style="font-family:system-ui;max-width:36rem;margin:3rem auto;padding:1rem;background:#0a0a0a;color:#eee">
+<h2 style="color:#f87171">Fitbit connection error</h2>
+<p><strong>${title}</strong></p>
+<pre style="background:#1a1a1a;padding:1rem;border-radius:8px;white-space:pre-wrap;font-size:13px">${detail}</pre>
+<p><a href="/fitband.html" style="color:#60a5fa">← back to dashboard</a></p>
+</body>`);
+}
+
 module.exports = async (req, res) => {
   const origin = L.getOrigin(req);
   const url = new URL(req.url, origin);
@@ -14,22 +26,15 @@ module.exports = async (req, res) => {
   const state = url.searchParams.get('state');
   const oauthErr = url.searchParams.get('error');
   const secure = L.isHttps(req);
-  const back = (status, detail) => {
-    const loc = '/fitband.html?fitbit=' + status + (detail ? '&detail=' + encodeURIComponent(detail) : '');
-    res.statusCode = 302; res.setHeader('Location', loc); res.end();
-  };
 
   if (oauthErr) {
-    console.error('[fitbit/callback] oauth error:', oauthErr);
-    return back('denied');
+    return showError(res, 'Google denied the request', 'error=' + oauthErr + '\n\n' + JSON.stringify(Object.fromEntries(url.searchParams), null, 2));
   }
   if (!code) {
-    console.error('[fitbit/callback] no code in request');
-    return back('error', 'no_code');
+    return showError(res, 'No authorization code received', JSON.stringify(Object.fromEntries(url.searchParams), null, 2));
   }
   if (state !== FIXED_STATE) {
-    console.error('[fitbit/callback] unexpected state:', state);
-    return back('error', 'bad_state');
+    return showError(res, 'State mismatch', 'received state: ' + state + '\nexpected: ' + FIXED_STATE);
   }
 
   try {
@@ -40,13 +45,17 @@ module.exports = async (req, res) => {
       client_secret: CLIENT_SECRET,
       redirect_uri: REDIRECT_URI,
     });
-    console.log('[fitbit/callback] token ok. has_refresh:', !!tok.refresh_token, 'has_access:', !!tok.access_token);
-    if (tok.refresh_token) {
-      res.setHeader('Set-Cookie', L.cookie('fitbit_refresh', tok.refresh_token, { maxAge: 60 * 60 * 24 * 180, secure }));
+
+    if (!tok.refresh_token) {
+      return showError(res, 'No refresh token returned', JSON.stringify(tok, null, 2));
     }
-    return back(tok.refresh_token ? 'connected' : 'error', tok.refresh_token ? null : 'no_refresh_token');
+
+    // Success — store refresh token and redirect to dashboard
+    res.setHeader('Set-Cookie', L.cookie('fitbit_refresh', tok.refresh_token, { maxAge: 60 * 60 * 24 * 180, secure }));
+    res.statusCode = 302;
+    res.setHeader('Location', '/fitband.html?fitbit=connected');
+    res.end();
   } catch (e) {
-    console.error('[fitbit/callback] token exchange failed:', e.message);
-    return back('error', e.message);
+    return showError(res, 'Token exchange failed: ' + e.message, e.detail || '');
   }
 };
