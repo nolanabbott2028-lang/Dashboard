@@ -10,6 +10,9 @@
 // can't find rather than failing the whole request.
 const L = require('./_lib');
 
+const CLIENT_ID = '1055570996751-tjluflqiu01k83dush5pecg9gg7mil60.apps.googleusercontent.com';
+const CLIENT_SECRET = 'G0CSPX-bSHSlRKOghXCusq3lFsg2300r1dB';
+
 async function listPoints(dataType, token, params) {
   const qs = params ? ('?' + new URLSearchParams(params).toString()) : '';
   try {
@@ -59,13 +62,9 @@ module.exports = async (req, res) => {
   const refresh = cookies.fitbit_refresh;
   if (!refresh) { res.statusCode = 200; res.end(JSON.stringify({ connected: false })); return; }
 
-  let id, secret;
-  try { ({ id, secret } = L.creds()); }
-  catch (e) { res.statusCode = 200; res.end(JSON.stringify({ connected: false, error: 'not_configured' })); return; }
-
   let tok;
   try {
-    tok = await L.tokenRequest({ grant_type: 'refresh_token', refresh_token: refresh, client_id: id, client_secret: secret });
+    tok = await L.tokenRequest({ grant_type: 'refresh_token', refresh_token: refresh, client_id: CLIENT_ID, client_secret: CLIENT_SECRET });
   } catch (e) {
     res.statusCode = 200;
     res.setHeader('Set-Cookie', L.clearCookie('fitbit_refresh', secure));
