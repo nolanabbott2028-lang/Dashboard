@@ -1,0 +1,4 @@
+.env
+session_log.md
+__pycache__/
+*.pyc
