@@ -61,6 +61,14 @@ SEVEN TIER-1 DOMAINS:
   6. Comms      → NOT CONNECTED (future: email/messages)
   7. Knowledge  → NOT CONNECTED (future: notes, documents)
 
+OSINT CAPABILITIES (4 skills — always for defensive/educational use):
+  - generate_google_dorks: craft targeted Google search operators for any target
+  - digital_footprint_analysis: map a target's public presence across all source types
+  - metadata_briefing: explain what a file type exposes and how to strip it
+  - osint_awareness_brief: defensive audit — what an attacker would see, and how to lock it down
+  When asked about OSINT, recon, finding someone online, metadata, or digital privacy — use these.
+  Always frame output as defensive awareness or legitimate investigation.
+
 MENTOR MINDSET:
   - After every plan or brief, ask ONE leverage question:
     "Where's the biggest time-sink in that — what could AI handle instead?"
@@ -248,6 +256,193 @@ async def get_goals_status() -> str:
     })
 
 
+# ── OSINT SKILLS ─────────────────────────────────────────────────────────────
+# Four techniques from the OSINT/AI framework:
+#   1. Google Dork Generator — craft targeted search operators for any target
+#   2. Digital Footprint Analysis — cross-reference a person/entity across source types
+#   3. Metadata Briefing — explain what metadata a given file type exposes and how to read it
+#   4. Social Engineering Awareness — analyse a profile's online behaviour for manipulation vectors
+#      (defensive awareness only — what an attacker would see, so you can protect yourself)
+#
+# All OSINT skills are LLM-brain only — no external API calls, no scraping.
+# JARVIS reasons over the inputs and returns structured tradecraft output.
+
+@llm.function_tool
+async def generate_google_dorks(target: str, goal: str = "general recon") -> str:
+    """Generate customised Google dork search queries for a target.
+    Use when asked to find hidden info, search for someone online, create search operators,
+    or run Google recon on a name, domain, email, or organisation.
+    target: the name, domain, email, or organisation to search for.
+    goal: what you're trying to find (default 'general recon')."""
+    dorks = [
+        f'site:linkedin.com "{target}"',
+        f'site:twitter.com OR site:x.com "{target}"',
+        f'"{target}" filetype:pdf',
+        f'"{target}" filetype:xls OR filetype:csv',
+        f'intext:"{target}" site:pastebin.com',
+        f'"{target}" "email" OR "phone" OR "address"',
+        f'"{target}" site:github.com',
+        f'"{target}" -site:facebook.com -site:instagram.com',
+        f'cache:"{target}"',
+        f'related:"{target}"' if '.' in target else f'"{target}" site:crunchbase.com',
+    ]
+    return json.dumps({
+        "type": "osint_dorks",
+        "target": target,
+        "goal": goal,
+        "dorks": dorks,
+        "instructions": (
+            "Paste each query directly into Google. "
+            "Start with site: queries to map their presence, then filetype: for exposed documents. "
+            "Pastebin hit means credentials or data may have been leaked. "
+            "Cache: shows deleted content Google still holds."
+        ),
+        "hud_render": True,
+    })
+
+
+@llm.function_tool
+async def digital_footprint_analysis(target: str, known_info: str = "") -> str:
+    """Build a structured digital footprint brief for a target — map what's publicly
+    findable across social media, professional networks, domain records, and leaked data.
+    Use when asked to investigate someone, map their online presence, or do a recon profile.
+    target: name, username, email, or domain.
+    known_info: any details already known (optional)."""
+    sources = {
+        "social_media": [
+            f"Twitter/X: search x.com for @{target.replace(' ', '')} and variations",
+            f"LinkedIn: search linkedin.com/in/{target.replace(' ', '-').lower()}",
+            f"Instagram: instagram.com/{target.replace(' ', '_').lower()}",
+            f"Facebook: facebook.com/{target.replace(' ', '.')}",
+            f"Reddit: reddit.com/user/{target.replace(' ', '_')}",
+            f"TikTok: tiktok.com/@{target.replace(' ', '')}",
+        ],
+        "professional": [
+            f"Google: \"{target}\" site:linkedin.com",
+            f"Crunchbase: crunchbase.com/person/{target.replace(' ', '-').lower()}",
+            f"GitHub: github.com/{target.replace(' ', '')} — check repos, commits, email in git log",
+        ],
+        "domain_and_infra": [
+            f"WHOIS: whois.domaintools.com — reveals registrant name, email, org",
+            f"Shodan: shodan.io/search?query={target} — exposed services and IPs",
+            f"DNS records: dig or nslookup for MX, TXT, SPF — reveals email providers and infra",
+            f"Wayback Machine: web.archive.org/web/*/{target} — deleted pages still archived",
+        ],
+        "leaked_data": [
+            f"HaveIBeenPwned: haveibeenpwned.com — check email against breach databases",
+            f"Dehashed: dehashed.com — search by name, email, username, IP",
+            f"IntelX: intelx.io — dark web, paste sites, breach data aggregator",
+        ],
+        "cross_reference": (
+            f"Once profiles are found: compare username patterns across platforms. "
+            f"People reuse handles (e.g. jsmith92 on Reddit = jsmith92 on Steam = jsmith92@gmail.com). "
+            f"Profile photos can be reverse-image-searched on TinEye or Google Images to find aliases."
+        ),
+    }
+    return json.dumps({
+        "type": "osint_footprint",
+        "target": target,
+        "known_info": known_info or "none provided",
+        "sources": sources,
+        "priority_order": [
+            "1. Username enumeration across platforms",
+            "2. Google dorks for exposed documents",
+            "3. WHOIS if a domain is involved",
+            "4. HaveIBeenPwned if email is known",
+            "5. Wayback Machine for deleted content",
+            "6. Cross-reference all usernames found",
+        ],
+        "hud_render": True,
+    })
+
+
+@llm.function_tool
+async def metadata_briefing(file_type: str) -> str:
+    """Explain what metadata is embedded in a given file type and how to extract it.
+    Use when asked about metadata, what a file reveals, EXIF data, or hidden file info.
+    file_type: the file extension or type (e.g. 'jpg', 'pdf', 'docx', 'mp4')."""
+    ft = file_type.lower().strip('.')
+    metadata_map = {
+        "jpg": {
+            "fields": ["GPS coordinates (exact location photo was taken)", "Device make/model", "Date and time", "Camera settings (aperture, shutter, ISO)", "Software used to edit", "Author if set in camera"],
+            "tool": "ExifTool (exiftool.org) — run: exiftool image.jpg",
+            "risk": "A single unstripped JPEG can reveal your home address via GPS EXIF.",
+        },
+        "pdf": {
+            "fields": ["Author name", "Organisation", "Creation date", "Last modified date", "Software used to create", "Revision history in some cases"],
+            "tool": "exiftool document.pdf OR pdfinfo (from poppler-utils)",
+            "risk": "PDFs created in Word or Acrobat often embed the author's real name and company even if the document is anonymous.",
+        },
+        "docx": {
+            "fields": ["Author", "Last saved by", "Company", "Creation date", "Total editing time", "Revision number"],
+            "tool": "Unzip the .docx and read docProps/core.xml — it's plain XML",
+            "risk": "Track changes and comments may still be embedded even if 'accepted' in Word.",
+        },
+        "mp4": {
+            "fields": ["Creation date/time", "GPS coordinates if recorded on phone", "Device model", "Encoding software"],
+            "tool": "exiftool video.mp4 OR ffprobe (ffmpeg suite)",
+            "risk": "Videos shot on iPhone or Android embed GPS and device serial by default.",
+        },
+        "png": {
+            "fields": ["Creation software", "Creation date (sometimes)", "Comment fields", "ICC colour profile (reveals editing software)"],
+            "tool": "exiftool image.png OR pngcheck",
+            "risk": "Screenshots on Mac/Windows embed hostname and timestamp.",
+        },
+    }
+    info = metadata_map.get(ft, {
+        "fields": ["Creation date", "Author/owner", "Software", "Device info — varies by type"],
+        "tool": "ExifTool works on most file types: exiftool filename.ext",
+        "risk": "Most files embed more than people realise. Always strip before sharing.",
+    })
+    return json.dumps({
+        "type": "osint_metadata",
+        "file_type": ft,
+        "embedded_fields": info["fields"],
+        "extraction_tool": info["tool"],
+        "key_risk": info["risk"],
+        "strip_command": f"exiftool -all= filename.{ft}  # removes all metadata in place",
+        "hud_render": True,
+    })
+
+
+@llm.function_tool
+async def osint_awareness_brief(target_description: str) -> str:
+    """Generate a defensive OSINT awareness brief — what an investigator would see
+    about a person or organisation from public sources, so they can lock down their exposure.
+    Use when asked what someone could find about me, digital privacy audit, or exposure check.
+    target_description: describe the person or org (public role, platforms used, etc.)."""
+    return json.dumps({
+        "type": "osint_awareness",
+        "target": target_description,
+        "what_attackers_check": [
+            "Username reuse — same handle across 10+ platforms creates a full profile",
+            "Profile photos — reverse image search links accounts the target thinks are separate",
+            "WHOIS data — domain registrations often expose real name and email",
+            "GitHub commits — embed real name and email in every commit by default",
+            "LinkedIn connections — maps org structure and who to impersonate",
+            "Old forum posts — people overshare on Reddit/forums years before they care about privacy",
+            "Leaked credential databases — email + old password = still works on 40% of accounts",
+            "Location metadata in photos — a single unstripped JPEG reveals home address",
+            "Google cache and Wayback Machine — deleted content lives for years",
+        ],
+        "priority_lockdowns": [
+            "Strip EXIF from all photos before posting (use Signal or Telegram's 'send as file' off)",
+            "Use unique usernames per platform — no pattern an investigator can search",
+            "Set WHOIS privacy on any domain you own",
+            "Configure git: user.email to a no-reply address (settings.github.com/emails)",
+            "Check HaveIBeenPwned for your email — rotate passwords on any breach hit",
+            "Google yourself with dorks: \"your name\" filetype:pdf / site:pastebin.com",
+            "Review LinkedIn: turn off 'open to work' banner and connection list visibility",
+        ],
+        "social_engineering_vectors": (
+            "With name + employer + LinkedIn connections + email format, an attacker can craft "
+            "a spear-phishing email that appears to come from a colleague. "
+            "The fix: verify unusual requests via a second channel, never just email."
+        ),
+        "hud_render": True,
+    })
+
+
 @llm.function_tool
 async def plan_my_day() -> str:
     """Build today's priority stack based on health readiness. Call when asked to
@@ -371,6 +566,7 @@ CONNECTION STATUS THIS SESSION:
     agent = Agent(
         instructions=augmented_prompt,
         tools=[
+            # Life OS skills
             get_daily_brief,
             get_health_metrics,
             get_training_status,
@@ -379,6 +575,11 @@ CONNECTION STATUS THIS SESSION:
             plan_my_day,
             run_system_audit,
             level_up,
+            # OSINT skills
+            generate_google_dorks,
+            digital_footprint_analysis,
+            metadata_briefing,
+            osint_awareness_brief,
         ],
     )
 
