@@ -42,7 +42,7 @@ from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli, llm
-from livekit.agents.voice_assistant import VoiceAssistant
+from livekit.agents import Agent, AgentSession
 from livekit.plugins import deepgram, elevenlabs, google, silero
 
 load_dotenv()
@@ -615,11 +615,15 @@ CONNECTION STATUS THIS SESSION:
     session_skills: list[str] = []
     session_errors: list[str] = []
 
-    # Wrap build_skill_functions to track which skills fire
     fnc_ctx = build_skill_functions()
 
-    # ── Step 4: Start the assistant ──
-    assistant = VoiceAssistant(
+    # ── Step 4: Build agent with new Agent + AgentSession API (livekit-agents 0.12+) ──
+    agent = Agent(
+        instructions=augmented_prompt,
+        tools=list(fnc_ctx._fncs.values()),
+    )
+
+    session = AgentSession(
         vad=silero.VAD.load(),
         stt=deepgram.STT(api_key=os.getenv("DEEPGRAM_API_KEY")),
         llm=google.LLM(
@@ -631,21 +635,14 @@ CONNECTION STATUS THIS SESSION:
             voice_id=ELEVENLABS_VOICE_ID,
             model_id="eleven_turbo_v2_5",
         ),
-        fnc_ctx=fnc_ctx,
-        chat_ctx=llm.ChatContext().append(
-            role="system",
-            text=augmented_prompt,
-        ),
     )
 
-    assistant.start(ctx.room)
-    await asyncio.sleep(1)
+    await session.start(agent=agent, room=ctx.room)
 
     # ── Step 5: One line. JARVIS doesn't introduce himself. ──
-    await assistant.say("Online. What do you need?", allow_interruptions=True)
+    await session.generate_reply(instructions="Say exactly: Online. What do you need?")
 
     # ── Step 6: Write session log on exit (knowledge compounds) ──
-    # This runs when the LiveKit job ends (user disconnects or agent is stopped).
     append_session_log({
         "fitbit_connected": fitbit_ok,
         "skills_called": session_skills,
