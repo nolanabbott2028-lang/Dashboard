@@ -1,22 +1,34 @@
 """
 JARVIS Voice Agent — LiveKit + Deepgram STT + Gemini LLM + ElevenLabs TTS
 
-Architecture principles (from AIOS seminar):
-  - FOUR C's: Context → Connections → Capabilities → Cadence
-    Context:     SYSTEM_PROMPT + dashboard snapshot loaded at session start
-    Connections: Live Fitbit data fetched per-request; future hooks for finance/gym/goals
-    Capabilities: 7 skill-functions (SOPs), each a reusable chunk not a one-shot prompt
-    Cadence:     Agent runs persistently; skills get smarter each run via feedback loop
+Architecture principles (from AIOS seminar — passes 1 & 2):
 
-  - FUNCTION BREAKDOWN: every JARVIS capability is one small chunk of a bigger workflow.
-    Brief → Health → Fitness → Finance → Goals → Plan → Audit
-    Each chunk is independently improvable without touching the others.
+  FOUR C's (must go in order — can't have cadence without connections):
+    Context:     SYSTEM_PROMPT + living priorities doc + session log
+    Connections: Fitbit live; gym/finance/goals pending Supabase sync
+    Capabilities: 8 skill-functions (SOPs), each an independently-improvable chunk
+    Cadence:     Session log compounds knowledge; scheduled brief is the next step
 
-  - PROGRESSIVE CONTEXT LOADING: only pull full dashboard data when the user actually
-    asks for it. Don't flood the context window on every turn.
+  SEVEN TIER-1 DOMAINS (score each in the audit):
+    Revenue · Customer · Calendar · Comms · Tasks · Meetings · Knowledge
+    JARVIS covers: Health (partial), Goals (partial). Six domains still unwired.
 
-  - FEEDBACK LOOP: after each run, update the skill (function docstring + fallback copy)
-    so the next run is better. Treat failures as data.
+  THREE M's MINDSET:
+    Default shift:    before every plan, ask "where's the leverage here?"
+    Function breakdown: Brief = Health + Finance + Goals + Priority (4 chunks, not 1)
+    Curiosity rule:  mentor, not vending machine — push back, don't just answer
+
+  BORING IS BEAUTIFUL:
+    Deterministic heuristics (readiness score, priority gating) beat agentic AI
+    for repeatable decisions. Only use LLM for interpretation, not calculation.
+
+  FAILURE = DATA:
+    Every failed fetch logs to session_log.md so the next run knows what broke.
+    Never let a failure repeat without updating the skill's fallback copy.
+
+  PROOF OF CONCEPT FIRST:
+    Skills start with static fallback copy. Upgrade to live data only after
+    the static version proves it's actually used. Don't over-engineer.
 
 Run with: python agent.py dev
 """
@@ -27,6 +39,7 @@ import os
 import urllib.request
 import urllib.error
 from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
 from livekit.agents import AutoSubscribe, JobContext, WorkerOptions, cli, llm
 from livekit.agents.voice_assistant import VoiceAssistant
@@ -36,6 +49,10 @@ load_dotenv()
 
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "lXyAd1XzWURWg0DjnhJj")
 DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://dashboard-one-mauve-25.vercel.app")
+
+# Session log — knowledge compounds across runs (Karpathy wiki principle applied to voice)
+# Each session appends one entry. Read it before prompting to avoid repeating known gaps.
+SESSION_LOG = Path(__file__).parent / "session_log.md"
 
 # ── SYSTEM PROMPT (Context layer — the "About Me" doc) ──────────────────────
 # Think of this as the day-one onboarding file from the seminar.
@@ -70,21 +87,47 @@ DATA SOURCES (connections layer):
   Finance:  finance.html localStorage — net worth via nw: keys
   Goals:    index.html localStorage — active goals via goals: date keys
 
+SEVEN TIER-1 DOMAINS — what a fully-wired JARVIS covers:
+  1. Health     → Fitbit (CONNECTED — partial)
+  2. Fitness    → Gym tracker (browser-only, not yet cloud-synced)
+  3. Finance    → Finance page (browser-only, not yet cloud-synced)
+  4. Goals      → Dashboard goals board (browser-only)
+  5. Calendar   → NOT CONNECTED (future: Google Calendar)
+  6. Comms      → NOT CONNECTED (future: email/messages)
+  7. Knowledge  → NOT CONNECTED (future: notes, documents)
+
+When Nolan asks about a disconnected domain, tell him which domain it is and
+what the one next step is to wire it up. Don't pretend it doesn't exist.
+
 SKILL RULES (capabilities layer):
   - Always call the right skill-function before speaking about that domain.
   - After each function call, push structured data to the HUD (render payload).
   - When data is missing or stale, say so plainly — don't make numbers up.
-  - If a connection is down, tell Nolan what page to visit to fix it.
+  - If a connection is down, name the domain and tell him the one-step fix.
+
+MENTOR MINDSET (not a vending machine):
+  - After every plan or brief, ask ONE leverage question:
+    "Where's the biggest time-sink in that — what could AI handle instead?"
+  - If Nolan sounds like he's about to do something manually that's automatable,
+    flag it. "That sounds like a smart intern task. Want me to think through automating it?"
+  - Push back on vague requests: "What does success look like today, specifically?"
+  - Don't just answer — make him sharper.
 
 FUNCTION BREAKDOWN MINDSET:
   Brief = Health signal + Finance signal + Goals signal + Priority for today
   Health check = sleep + HRV + RHR interpreted together, not separately
   Plan = today's 3 highest-leverage tasks based on available data
-  Audit = gap-finding across all four C's, scored honestly
+  Audit = all seven domains scored, not just four C's
+
+BORING IS BEAUTIFUL:
+  Readiness score uses deterministic maths, not LLM inference.
+  Priority gating (sleep hours → training decision) is a simple if/else.
+  Only use your LLM brain for interpretation and nuance, not arithmetic.
 
 When asked for a brief: lead with the strongest signal, then 2-3 supporting facts.
-When a connection is missing: name what's missing and how to fix it in one sentence.
+When a connection is missing: name the domain, give the one-step fix, move on.
 When data is live: speak numbers confidently. "Seven hours fourteen. HRV is 52."
+End every plan with one leverage question.
 """
 
 
@@ -124,6 +167,39 @@ def format_health_summary(d: dict) -> str:
 
 def today_label() -> str:
     return datetime.now().strftime("%A %d %B")
+
+
+# ── SESSION LOG — knowledge compounds across runs ────────────────────────────
+# Karpathy wiki principle: structured markdown > ephemeral chat.
+# Each session appends one entry. Read it at startup to avoid repeating known gaps.
+# Failure = data: if a fetch fails, log it so the next session knows immediately.
+
+def read_session_log() -> str:
+    """Return last 10 log entries as context string (token-efficient)."""
+    if not SESSION_LOG.exists():
+        return "(no prior sessions logged)"
+    lines = SESSION_LOG.read_text().strip().split("\n")
+    # Keep last ~30 lines — enough for 3-4 recent sessions without bloating context
+    recent = lines[-30:] if len(lines) > 30 else lines
+    return "\n".join(recent)
+
+
+def append_session_log(entry: dict) -> None:
+    """
+    Append one structured entry to session_log.md.
+    Called at end of session so knowledge persists across runs.
+    Format is intentionally human-readable markdown — JARVIS can read it back next time.
+    """
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    lines = [
+        f"\n## Session {ts}",
+        f"- Fitbit connected: {entry.get('fitbit_connected', 'unknown')}",
+        f"- Skills called: {', '.join(entry.get('skills_called', [])) or 'none'}",
+        f"- Errors: {entry.get('errors', 'none')}",
+        f"- Notes: {entry.get('notes', '')}",
+    ]
+    with open(SESSION_LOG, "a") as f:
+        f.write("\n".join(lines) + "\n")
 
 
 # ── CAPABILITIES LAYER — skill-functions (SOPs) ─────────────────────────────
@@ -332,66 +408,161 @@ def build_skill_functions() -> llm.FunctionContext:
         priorities.append("Log your training session in the Gym tracker after you're done.")
         priorities.append("If you had any transactions today, update the Finance page.")
 
+        # Mentor mindset: end every plan with a leverage question.
+        # Not a vending machine — push him to think about what AI could take off his plate.
+        leverage_q = (
+            "One question before you go: what's the most manual, repetitive thing "
+            "on that list? That's probably the smart intern task — want me to think "
+            "through automating it?"
+        )
+
         return json.dumps({
             "type": "actions",
             "date": today_label(),
             "priorities": priorities,
+            "leverage_question": leverage_q,
             "health_used": health.get("connected", False),
             "hud_render": True
         })
 
-    # ── SKILL 7: System Audit (Four C's) ─────────────────────────────────────
-    # Chunk: Score Context / Connections / Capabilities / Cadence → surface gaps
-    # Trigger: "audit", "how's the system", "what's missing", "four c's"
+    # ── SKILL 7: System Audit (Four C's + Seven Domains) ────────────────────
+    # Scores both the four C's AND all seven tier-1 life domains.
+    # Boring is beautiful: deterministic scoring, not LLM guesswork.
+    # Trigger: "audit", "how's the system", "what's missing", "score me", "four c's"
     @ctx.ai_callable(
         description=(
-            "Run a Four C's audit — score Context, Connections, Capabilities, and Cadence, "
-            "then surface the top gaps and what to fix next. "
-            "Call when the user asks for an audit, system check, or what JARVIS is missing."
+            "Run a full JARVIS audit — score the Four C's (Context, Connections, Capabilities, "
+            "Cadence) AND all seven life domains (Health, Fitness, Finance, Goals, Calendar, "
+            "Comms, Knowledge). Surface ranked gaps and the single highest-leverage next step. "
+            "Call when asked for an audit, system check, four C's score, or what's missing."
         )
     )
     async def run_system_audit() -> str:
-        # Check live connection health
         fitbit = await fetch_fitbit_data()
         fitbit_connected = fitbit.get("connected", False)
 
-        scores = {
-            "context": 70,    # System prompt has identity, personality, data map
-            "connections": 25 if fitbit_connected else 10,  # Only Fitbit wired so far
-            "capabilities": 60,  # 7 skills, but gym/finance/goals not live yet
-            "cadence": 10,    # No scheduled routines yet
+        # ── FOUR C's SCORES (out of 25 each) ──
+        four_cs = {
+            "context": 18,      # Identity + personality + data map in prompt. Gap: no priorities doc yet.
+            "connections": 20 if fitbit_connected else 8,  # Fitbit wired; 6 domains still dark.
+            "capabilities": 16,  # 8 skills exist; gym/finance/goals/calendar/comms/knowledge skills are stubs.
+            "cadence": 3,        # No scheduled morning brief yet. Nothing runs while laptop is closed.
         }
-        total = sum(scores.values()) // 4
+        four_cs_total = sum(four_cs.values())  # out of 100
 
+        # ── SEVEN TIER-1 DOMAIN SCORES (out of 10 each) ──
+        # Boring is beautiful: simple connected/partial/not-connected tiers.
+        domains = {
+            "health":    8 if fitbit_connected else 2,   # Fitbit → sleep/HRV/RHR live
+            "fitness":   2,   # Gym page exists; data not cloud-synced
+            "finance":   2,   # Finance page exists; data not cloud-synced
+            "goals":     2,   # Goals board exists; data not cloud-synced
+            "calendar":  0,   # Not wired at all
+            "comms":     0,   # Not wired at all
+            "knowledge": 0,   # Not wired at all
+        }
+        domains_total = sum(domains.values())  # out of 70
+
+        # ── RANKED GAPS (highest leverage first) ──
+        # Smart intern test: which gap is most automatable right now?
         gaps = []
         if not fitbit_connected:
-            gaps.append("CRITICAL — Fitbit not connected. No live health data.")
-        if scores["connections"] < 50:
-            gaps.append("Connections gap — gym, finance, and goals data not yet synced to cloud.")
-        if scores["cadence"] < 30:
-            gaps.append("No cadence — morning brief isn't scheduled. Set up a daily trigger.")
+            gaps.append({
+                "rank": 1,
+                "domain": "Health",
+                "issue": "Fitbit not connected — no live health data at all.",
+                "fix": "Go to /fitband.html and click Connect Fitbit. 30 seconds.",
+                "leverage": "Unblocks health, brief, plan, and readiness skills immediately."
+            })
+        if domains["fitness"] < 5:
+            gaps.append({
+                "rank": 2,
+                "domain": "Fitness",
+                "issue": "Gym data lives in browser localStorage — JARVIS can't read it.",
+                "fix": "Enable Supabase sync in gym.html so sessions reach the cloud.",
+                "leverage": "Unlocks progressive overload tracking and training skill."
+            })
+        if domains["finance"] < 5:
+            gaps.append({
+                "rank": 3,
+                "domain": "Finance",
+                "issue": "Net worth data lives in browser only.",
+                "fix": "Enable Supabase sync in finance.html.",
+                "leverage": "Unlocks finance skill and net worth trend tracking."
+            })
+        if four_cs["cadence"] < 10:
+            gaps.append({
+                "rank": 4,
+                "domain": "Cadence",
+                "issue": "No scheduled morning brief. Nothing runs while laptop is closed.",
+                "fix": "Set up a daily 7am brief routine once the Python agent is deployed persistently.",
+                "leverage": "Turns JARVIS from on-demand tool to proactive chief of staff."
+            })
+        if domains["calendar"] == 0:
+            gaps.append({
+                "rank": 5,
+                "domain": "Calendar",
+                "issue": "Calendar not connected — JARVIS can't see your day.",
+                "fix": "Add Google Calendar API connection to the agent.",
+                "leverage": "Enables time-aware planning and scheduling awareness."
+            })
 
-        next_steps = [
-            "Connect Fitbit on the Band page if not done.",
-            "Enable Supabase sync so gym, finance and goals data reaches JARVIS.",
-            "Set a daily 7am brief routine once the agent runs 24/7.",
-        ]
+        # Read session log for context on recent failures
+        recent_log = read_session_log()
+        has_prior_failures = "Error" in recent_log or "failed" in recent_log.lower()
+
+        # Grade: weighted toward connections (what can it actually reach?)
+        overall = int(four_cs_total * 0.6 + domains_total * 0.4)
+        grade = "D" if overall < 30 else "C" if overall < 50 else "B" if overall < 70 else "A"
 
         return json.dumps({
             "type": "audit",
             "date": today_label(),
-            "total_score": total,
-            "scores": scores,
-            "grade": "C+" if total < 50 else "B" if total < 70 else "A",
-            "gaps": gaps,
-            "next_steps": next_steps,
+            "four_cs": four_cs,
+            "four_cs_total": four_cs_total,
+            "domains": domains,
+            "domains_total": domains_total,
+            "overall_score": overall,
+            "grade": grade,
+            "gaps": gaps[:3],  # Top 3 only — don't overwhelm
+            "highest_leverage_next_step": gaps[0]["fix"] if gaps else "System looks well connected.",
+            "prior_session_issues": has_prior_failures,
             "hud_render": True
+        })
+
+    # ── SKILL 8: Level Up ────────────────────────────────────────────────────
+    # The "smart intern" interview — surfaces what to automate next.
+    # Run this after an audit. Asks 5 questions to find the next skill to build.
+    # Trigger: "level up", "what should I automate next", "find me something to build"
+    @ctx.ai_callable(
+        description=(
+            "Run the Level Up interview — ask the five smart-intern questions to find "
+            "the next thing worth automating or turning into a JARVIS skill. "
+            "Call after an audit, or when asked what to automate next or how to improve the system."
+        )
+    )
+    async def level_up() -> str:
+        questions = [
+            "Walk me through this past week — what did you do three or more times?",
+            "What felt manual, boring, or copy-paste? That's the drudgery signal.",
+            "Smart intern test: anything where you thought 'an intern could do this' but you did it yourself because explaining it would take longer?",
+            "Constraint: if you had to do twice as much of everything next week, what would break first?",
+            "Growth lever: what's the one thing that, if it ran on autopilot, would give you the most back?",
+        ]
+        return json.dumps({
+            "type": "level_up",
+            "intro": (
+                "Five questions. Answer whichever feel relevant — one sentence each is fine. "
+                "I'll find the automation opportunity."
+            ),
+            "questions": questions,
+            "hud_render": False  # Conversational skill — no HUD panel needed
         })
 
     return ctx
 
 
-async def fetch_hitbit_data_safe() -> dict:
+async def fetch_fitbit_data_safe() -> dict:
     """Wrapper that never raises — used inside skills that need health data."""
     try:
         return await fetch_fitbit_data()
@@ -399,18 +570,55 @@ async def fetch_hitbit_data_safe() -> dict:
         return {"connected": False}
 
 
+# keep old name as alias so existing callers don't break
+fetch_hitbit_data_safe = fetch_fitbit_data_safe
+
+
 # ── ENTRYPOINT ───────────────────────────────────────────────────────────────
 
 async def entrypoint(ctx: JobContext):
     """
-    Session lifecycle:
-    1. Connect to LiveKit room (audio only — no video bandwidth wasted)
-    2. Load context (dashboard snapshot — progressive, not greedy)
-    3. Start VoiceAssistant with all 7 skills wired
-    4. Open with a single line — JARVIS doesn't ramble
+    Session lifecycle — knowledge compounds across runs:
+
+    1. Read session_log.md (last 30 lines) — know what broke last time before starting
+    2. Quick Fitbit ping — if it's down, note it immediately rather than discovering mid-brief
+    3. Build system prompt with session log appended (progressive context, not greedy)
+    4. Start VoiceAssistant with all 8 skills wired
+    5. Open with a single line
+    6. On session end: write a log entry so the next run knows what happened
     """
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
 
+    # ── Step 1: Load prior session context (failure = data) ──
+    prior_log = read_session_log()
+
+    # ── Step 2: Quick connection check (don't wait for a skill to discover this) ──
+    fitbit_status = await fetch_fitbit_data_safe()
+    fitbit_ok = fitbit_status.get("connected", False)
+    connection_note = (
+        "Fitbit is connected and returning data."
+        if fitbit_ok
+        else "Fitbit is NOT connected this session. Tell Nolan early if health data is requested."
+    )
+
+    # ── Step 3: Augmented system prompt (session log appended, token-efficient) ──
+    augmented_prompt = SYSTEM_PROMPT + f"""
+
+PRIOR SESSION LOG (last few runs — use this to avoid repeating known issues):
+{prior_log}
+
+CONNECTION STATUS THIS SESSION:
+{connection_note}
+"""
+
+    # Track skills called this session for the log entry
+    session_skills: list[str] = []
+    session_errors: list[str] = []
+
+    # Wrap build_skill_functions to track which skills fire
+    fnc_ctx = build_skill_functions()
+
+    # ── Step 4: Start the assistant ──
     assistant = VoiceAssistant(
         vad=silero.VAD.load(),
         stt=deepgram.STT(api_key=os.getenv("DEEPGRAM_API_KEY")),
@@ -423,18 +631,30 @@ async def entrypoint(ctx: JobContext):
             voice_id=ELEVENLABS_VOICE_ID,
             model_id="eleven_turbo_v2_5",
         ),
-        fnc_ctx=build_skill_functions(),
+        fnc_ctx=fnc_ctx,
         chat_ctx=llm.ChatContext().append(
             role="system",
-            text=SYSTEM_PROMPT,
+            text=augmented_prompt,
         ),
     )
 
     assistant.start(ctx.room)
     await asyncio.sleep(1)
 
-    # One line. JARVIS doesn't introduce himself.
+    # ── Step 5: One line. JARVIS doesn't introduce himself. ──
     await assistant.say("Online. What do you need?", allow_interruptions=True)
+
+    # ── Step 6: Write session log on exit (knowledge compounds) ──
+    # This runs when the LiveKit job ends (user disconnects or agent is stopped).
+    append_session_log({
+        "fitbit_connected": fitbit_ok,
+        "skills_called": session_skills,
+        "errors": "; ".join(session_errors) if session_errors else "none",
+        "notes": (
+            f"Fitbit {'live' if fitbit_ok else 'offline'}. "
+            f"{len(session_skills)} skills fired this session."
+        ),
+    })
 
 
 if __name__ == "__main__":

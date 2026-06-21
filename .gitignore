@@ -9,3 +9,6 @@ node_modules/
 
 # JARVIS agent secrets — NEVER commit
 jarvis-agent/.env
+
+# JARVIS runtime data — local only, not for git
+jarvis-agent/session_log.md
