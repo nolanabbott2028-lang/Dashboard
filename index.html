@@ -330,6 +330,7 @@ body{ background:#000 !important; font-family:'Inter',-apple-system,sans-serif; 
  * Apps in the suite — one bento card each.
  * ============================================================ */
 const APPS = [
+  { file: 'ai-mentor.html',   name: 'JARVIS',       tag: 'Voice AI chief of staff · live briefing', icon: '🤖', wide: true },
   { file: 'peak.html',        name: 'PEAK TRACKER', tag: 'Daily readiness · energy curve',        icon: '🔆', wide: true },
   { file: 'peak-standalone.html', name: 'PEAK · STANDALONE', tag: 'Self-contained · share / download', icon: '📦', wide: true },
   { file: 'finance.html',     name: 'Finance',     tag: 'Net worth · subs · orders · wishlist', icon: '💰', wide: true },
@@ -578,6 +579,7 @@ function statFor(file){
   return null;
 }
 const ART = {
+  'ai-mentor.html':'linear-gradient(135deg,#0EA5E9,#6366F1)',
   'finance.html':'linear-gradient(135deg,#7C3AED,#22D3EE)',
   'gym.html':'linear-gradient(135deg,#F472B6,#8B5CF6)',
   'supplements.html':'linear-gradient(135deg,#22D3EE,#7C3AED)',
