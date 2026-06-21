@@ -5,6 +5,7 @@ const L = require('./_lib');
 const CLIENT_ID = '1055570996751-tjluflqiu01k83dush5pecg9gg7mil60.apps.googleusercontent.com';
 const CLIENT_SECRET = 'G0CSPX-bSHSlRKOghXCusq3lFsg2300r1dB';
 const FIXED_STATE = 'dashboard-fitbit-2026';
+const REDIRECT_URI = 'https://dashboard-one-mauve-25.vercel.app/api/fitbit/callback';
 
 module.exports = async (req, res) => {
   const origin = L.getOrigin(req);
@@ -37,7 +38,7 @@ module.exports = async (req, res) => {
       code,
       client_id: CLIENT_ID,
       client_secret: CLIENT_SECRET,
-      redirect_uri: L.redirectUri(req),
+      redirect_uri: REDIRECT_URI,
     });
     console.log('[fitbit/callback] token ok. has_refresh:', !!tok.refresh_token, 'has_access:', !!tok.access_token);
     if (tok.refresh_token) {
