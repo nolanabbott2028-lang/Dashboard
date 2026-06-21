@@ -3,3 +3,9 @@
 .vscode/
 .idea/
 *.swp
+
+# Node
+node_modules/
+
+# JARVIS agent secrets — NEVER commit
+jarvis-agent/.env
