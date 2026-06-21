@@ -11,7 +11,7 @@
 const L = require('./_lib');
 
 const CLIENT_ID = '1055570996751-tjluflqiu01k83dush5pecg9gg7mil60.apps.googleusercontent.com';
-const CLIENT_SECRET = 'G0CSPX-bSHSlRKOghXCusq3lFsg2300r1dB';
+const CLIENT_SECRET = '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';
 
 async function listPoints(dataType, token, params) {
   const qs = params ? ('?' + new URLSearchParams(params).toString()) : '';
