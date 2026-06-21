@@ -1,2 +1,5 @@
+# Issue 22: httpx for non-blocking async HTTP (replaces urllib in fetch_fitbit)
+httpx>=0.27.0
+# Issue 23: pinned to 1.x to avoid non-deterministic Railway builds
 livekit-agents[deepgram,elevenlabs,google,silero]>=1.0.0,<2.0.0
 python-dotenv

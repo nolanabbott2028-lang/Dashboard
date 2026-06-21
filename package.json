@@ -2,6 +2,7 @@
   "name": "dashboard",
   "version": "1.0.0",
   "private": true,
+  "engines": { "node": ">=18" },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
     "livekit-server-sdk": "^2.6.0"

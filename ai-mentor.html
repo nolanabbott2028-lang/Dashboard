@@ -6,8 +6,8 @@
 <title>JARVIS · AI OS</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-<!-- LiveKit browser SDK (UMD) -->
-<script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+<!-- LiveKit browser SDK (UMD) — Issue 15: pinned version, no silent breaking updates -->
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.9.4/dist/livekit-client.umd.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
@@ -450,28 +450,16 @@ function stopMicViz(){
   document.querySelectorAll('.vbar').forEach(b=>{b.style.height='4px';b.style.opacity='0.5'});
 }
 
-/* ── AGENT AUDIO LEVEL VIZ ── */
-function watchAgentAudio(){
-  // Poll remote audio tracks for level — drives the orb speaking state
-  setInterval(()=>{
-    if(!room||!connected)return;
-    let speaking=false;
-    room.remoteParticipants.forEach(p=>{
-      p.audioTrackPublications.forEach(pub=>{
-        if(pub.track&&pub.track.isMuted===false)speaking=true;
-      });
-    });
-    // ActiveSpeakersChanged handles this more accurately; this is a fallback
-  },500);
-}
-
 /* ── IS THIS AN AGENT PARTICIPANT? ── */
+// Issue 20: use SDK enum instead of magic number 2
 function isAgent(participant){
   if(!participant)return false;
   const id=(participant.identity||'').toLowerCase();
-  // LiveKit agents can have various identities — check common patterns
+  const AGENT_KIND = LivekitClient.ParticipantKind
+    ? LivekitClient.ParticipantKind.AGENT
+    : 2; // safe fallback if enum not exported
   return id.startsWith('agent')||id.includes('jarvis')||id.includes('livekit-agent')||
-         id.startsWith('assistant')||participant.kind===2; // ParticipantKind.AGENT=2
+         id.startsWith('assistant')||participant.kind===AGENT_KIND;
 }
 
 /* ── CONNECT ── */
@@ -502,7 +490,7 @@ async function connect(){
       $('roomHint').textContent='ROOM: '+room.name;
       setStatus('online','ONLINE');
       tx('jarvis','System online. Waiting for JARVIS…');
-      watchAgentAudio();
+      // Issue 19: watchAgentAudio() removed — it was dead code; ActiveSpeakersChanged handles state
     });
 
     /* ── Room disconnected ── */
@@ -541,9 +529,10 @@ async function connect(){
     });
 
     /* ── Transcription (agent STT + TTS text) ── */
+    // Issue 17: only display final segments — non-final are interim partials that flicker
     room.on(LivekitClient.RoomEvent.TranscriptionReceived,(segments,participant)=>{
       segments.forEach(seg=>{
-        if(!seg.final&&!seg.text)return;
+        if(!seg.final)return; // skip interim segments
         const text=(seg.text||'').trim();
         if(!text)return;
         const agent=isAgent(participant);

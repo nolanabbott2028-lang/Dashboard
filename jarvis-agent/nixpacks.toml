@@ -1,2 +1,7 @@
+# Issue 24: libsndfile required by Silero ONNX; stdenv.cc.cc.lib provides libstdc++/libgomp
+# Issue 25: explicit install phase so nixpacks always uses the right python
 [phases.setup]
-nixPkgs = ["python311", "python311Packages.pip", "ffmpeg", "pkg-config"]
+nixPkgs = ["python311", "python311Packages.pip", "ffmpeg", "pkg-config", "libsndfile", "stdenv.cc.cc.lib"]
+
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
