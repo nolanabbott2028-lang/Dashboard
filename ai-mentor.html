@@ -359,6 +359,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Inter'
 
 /* ── STATE ── */
 let room=null,connected=false,micMuted=false;
+let audioCtx=null,analyser=null,vizRaf=null;
 const $ = id => document.getElementById(id);
 
 /* ── STATUS ── */
@@ -367,12 +368,13 @@ function setStatus(state,label){
   $('slabel').textContent=label;
   const orb=$('orb');
   orb.className='orb'+(state==='listening'||state==='speaking'?' '+state:'');
-  $('orbLabel').textContent=label;
+  $('orbLabel').textContent={listening:'LISTENING',speaking:'SPEAKING',online:'ONLINE',error:'ERROR'}[state]||'J.A.R.V.I.S';
   $('viz').className='viz'+(state==='listening'||state==='speaking'?' active':'');
 }
 
 /* ── TRANSCRIPT ── */
 function tx(who,text){
+  if(!text||!text.trim())return;
   const box=$('txBox');
   const ph=box.querySelector('.tx-ph');if(ph)ph.remove();
   const d=document.createElement('div');
@@ -422,6 +424,56 @@ function render(d){
   }
 }
 
+/* ── MIC LEVEL VIZ (real AudioContext analyser) ── */
+function startMicViz(stream){
+  try{
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    analyser=audioCtx.createAnalyser();
+    analyser.fftSize=32;
+    audioCtx.createMediaStreamSource(stream).connect(analyser);
+    const bars=document.querySelectorAll('.vbar');
+    const data=new Uint8Array(analyser.frequencyBinCount);
+    function tick(){
+      vizRaf=requestAnimationFrame(tick);
+      analyser.getByteFrequencyData(data);
+      bars.forEach((b,i)=>{
+        const v=data[Math.floor(i*data.length/bars.length)]||0;
+        b.style.height=Math.max(4,v/255*32)+'px';
+        b.style.opacity=micMuted?'0.15':'1';
+      });
+    }
+    tick();
+  }catch(e){}
+}
+function stopMicViz(){
+  if(vizRaf)cancelAnimationFrame(vizRaf);
+  document.querySelectorAll('.vbar').forEach(b=>{b.style.height='4px';b.style.opacity='0.5'});
+}
+
+/* ── AGENT AUDIO LEVEL VIZ ── */
+function watchAgentAudio(){
+  // Poll remote audio tracks for level — drives the orb speaking state
+  setInterval(()=>{
+    if(!room||!connected)return;
+    let speaking=false;
+    room.remoteParticipants.forEach(p=>{
+      p.audioTrackPublications.forEach(pub=>{
+        if(pub.track&&pub.track.isMuted===false)speaking=true;
+      });
+    });
+    // ActiveSpeakersChanged handles this more accurately; this is a fallback
+  },500);
+}
+
+/* ── IS THIS AN AGENT PARTICIPANT? ── */
+function isAgent(participant){
+  if(!participant)return false;
+  const id=(participant.identity||'').toLowerCase();
+  // LiveKit agents can have various identities — check common patterns
+  return id.startsWith('agent')||id.includes('jarvis')||id.includes('livekit-agent')||
+         id.startsWith('assistant')||participant.kind===2; // ParticipantKind.AGENT=2
+}
+
 /* ── CONNECT ── */
 async function connect(){
   const btn=$('connectBtn');
@@ -429,54 +481,103 @@ async function connect(){
   setStatus('','CONNECTING');
   try{
     const res=await fetch('/api/jarvis/token');
-    if(!res.ok)throw new Error('Token request failed: '+res.status);
+    if(!res.ok){
+      const body=await res.text();
+      throw new Error('Token '+res.status+': '+body);
+    }
     const {token,url}=await res.json();
+    if(!url)throw new Error('No LiveKit URL returned from token endpoint');
 
     room=new LivekitClient.Room({
-      audioCaptureDefaults:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}
+      audioCaptureDefaults:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},
+      adaptiveStream:true,
+      dynacast:true,
     });
 
+    /* ── Room connected ── */
     room.on(LivekitClient.RoomEvent.Connected,()=>{
       connected=true;
       $('connectWrap').style.display='none';
       $('micWrap').style.display='flex';
       $('roomHint').textContent='ROOM: '+room.name;
       setStatus('online','ONLINE');
-      tx('jarvis','System online. Waiting for agent…');
+      tx('jarvis','System online. Waiting for JARVIS…');
+      watchAgentAudio();
     });
 
+    /* ── Room disconnected ── */
     room.on(LivekitClient.RoomEvent.Disconnected,()=>{
       connected=false;
+      stopMicViz();
       setStatus('','OFFLINE');
       $('connectWrap').style.display='block';
       $('micWrap').style.display='none';
       btn.disabled=false;btn.textContent='INITIALISE';
     });
 
-    room.on(LivekitClient.RoomEvent.DataReceived,(payload)=>{
+    /* ── Data channel (HUD render payloads from agent) ── */
+    room.on(LivekitClient.RoomEvent.DataReceived,(payload,participant,kind,topic)=>{
       try{
-        const msg=JSON.parse(new TextDecoder().decode(payload));
-        if(msg.topic==='aios.render')render(msg.data);
+        const text=new TextDecoder().decode(payload);
+        const msg=JSON.parse(text);
+        // Agent sends either {topic,data} wrapper or a bare render payload
+        if(topic==='aios.render'||msg.topic==='aios.render'){
+          render(msg.data||msg);
+        } else if(msg.type){
+          render(msg); // bare payload with a type field
+        }
       }catch(e){}
     });
 
+    /* ── Who's speaking ── */
     room.on(LivekitClient.RoomEvent.ActiveSpeakersChanged,(speakers)=>{
       if(!connected)return;
-      const agentTalking=speakers.some(s=>s.identity&&s.identity.startsWith('agent'));
-      setStatus(agentTalking?'speaking':'listening',agentTalking?'SPEAKING':'LISTENING');
+      const agentSpeaking=speakers.some(s=>isAgent(s));
+      if(agentSpeaking){
+        setStatus('speaking','SPEAKING');
+      } else if(!micMuted){
+        setStatus('listening','LISTENING');
+      }
     });
 
+    /* ── Transcription (agent STT + TTS text) ── */
     room.on(LivekitClient.RoomEvent.TranscriptionReceived,(segments,participant)=>{
       segments.forEach(seg=>{
-        if(!seg.final)return;
-        const isAgent=participant?.identity?.startsWith('agent');
-        tx(isAgent?'jarvis':'user',seg.text);
-        setStatus(isAgent?'speaking':'listening',isAgent?'SPEAKING':'LISTENING');
+        if(!seg.final&&!seg.text)return;
+        const text=(seg.text||'').trim();
+        if(!text)return;
+        const agent=isAgent(participant);
+        tx(agent?'jarvis':'user',text);
+        setStatus(agent?'speaking':'listening',agent?'SPEAKING':'LISTENING');
       });
     });
 
+    /* ── Track subscribed — catch agent audio track for speaking viz ── */
+    room.on(LivekitClient.RoomEvent.TrackSubscribed,(track,pub,participant)=>{
+      if(track.kind==='audio'&&isAgent(participant)){
+        // Agent audio came in — set speaking state briefly, ActiveSpeakersChanged takes over
+        setStatus('speaking','SPEAKING');
+      }
+    });
+
+    /* ── Agent joined the room ── */
+    room.on(LivekitClient.RoomEvent.ParticipantConnected,(participant)=>{
+      if(isAgent(participant)){
+        tx('jarvis','JARVIS agent connected.');
+        setStatus('listening','LISTENING');
+      }
+    });
+
+    /* ── Connect and enable mic ── */
     await room.connect(url,token);
-    await room.localParticipant.setMicrophoneEnabled(true);
+    const micTrack=await room.localParticipant.setMicrophoneEnabled(true);
+
+    // Wire up real-level AudioContext visualiser from the mic stream
+    if(micTrack&&micTrack.track&&micTrack.track.mediaStreamTrack){
+      const stream=new MediaStream([micTrack.track.mediaStreamTrack]);
+      startMicViz(stream);
+    }
+
     setStatus('listening','LISTENING');
 
   }catch(err){
