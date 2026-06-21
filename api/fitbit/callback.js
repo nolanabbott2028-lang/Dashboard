@@ -1,9 +1,8 @@
 // GET /api/fitbit/callback — Google redirects here with ?code & ?state.
-// Exchanges the code for tokens and stores the refresh token in a cookie.
 const L = require('./_lib');
 
-const CLIENT_ID = '1055570996751-tjluflqiu01k83dush5pecg9gg7mil60.apps.googleusercontent.com';
-const CLIENT_SECRET = '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';
+const CLIENT_ID = process.env.FITBIT_CLIENT_ID;
+const CLIENT_SECRET = process.env.FITBIT_CLIENT_SECRET;
 const FIXED_STATE = 'dashboard-fitbit-2026';
 const REDIRECT_URI = 'https://dashboard-one-mauve-25.vercel.app/api/fitbit/callback';
 
@@ -27,15 +26,10 @@ module.exports = async (req, res) => {
   const oauthErr = url.searchParams.get('error');
   const secure = L.isHttps(req);
 
-  if (oauthErr) {
-    return showError(res, 'Google denied the request', 'error=' + oauthErr + '\n\n' + JSON.stringify(Object.fromEntries(url.searchParams), null, 2));
-  }
-  if (!code) {
-    return showError(res, 'No authorization code received', JSON.stringify(Object.fromEntries(url.searchParams), null, 2));
-  }
-  if (state !== FIXED_STATE) {
-    return showError(res, 'State mismatch', 'received state: ' + state + '\nexpected: ' + FIXED_STATE);
-  }
+  if (!CLIENT_ID || !CLIENT_SECRET) return showError(res, 'Not configured', 'FITBIT_CLIENT_ID / FITBIT_CLIENT_SECRET env vars missing in Vercel.');
+  if (oauthErr) return showError(res, 'Google denied the request', 'error=' + oauthErr);
+  if (!code) return showError(res, 'No authorization code received', JSON.stringify(Object.fromEntries(url.searchParams), null, 2));
+  if (state !== FIXED_STATE) return showError(res, 'State mismatch', 'received: ' + state);
 
   try {
     const tok = await L.tokenRequest({
@@ -46,11 +40,8 @@ module.exports = async (req, res) => {
       redirect_uri: REDIRECT_URI,
     });
 
-    if (!tok.refresh_token) {
-      return showError(res, 'No refresh token returned', JSON.stringify(tok, null, 2));
-    }
+    if (!tok.refresh_token) return showError(res, 'No refresh token returned', JSON.stringify(tok, null, 2));
 
-    // Success — store refresh token and redirect to dashboard
     res.setHeader('Set-Cookie', L.cookie('fitbit_refresh', tok.refresh_token, { maxAge: 60 * 60 * 24 * 180, secure }));
     res.statusCode = 302;
     res.setHeader('Location', '/fitband.html?fitbit=connected');

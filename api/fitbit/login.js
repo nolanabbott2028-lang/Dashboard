@@ -1,15 +1,17 @@
 // GET /api/fitbit/login — kicks off the Google Health OAuth flow.
-// We skip the CSRF state cookie entirely (cookies are unreliable across the
-// Google redirect on Safari/iOS) and use a fixed state token instead.
 const L = require('./_lib');
 
-// Hardcoded credentials — only this deploy ever uses these keys.
-const CLIENT_ID = '1055570996751-tjluflqiu01k83dush5pecg9gg7mil60.apps.googleusercontent.com';
-const CLIENT_SECRET = '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';
-const FIXED_STATE = 'dashboard-fitbit-2026';
+const CLIENT_ID = process.env.FITBIT_CLIENT_ID;
 const REDIRECT_URI = 'https://dashboard-one-mauve-25.vercel.app/api/fitbit/callback';
+const FIXED_STATE = 'dashboard-fitbit-2026';
 
 module.exports = (req, res) => {
+  if (!CLIENT_ID) {
+    res.statusCode = 500;
+    res.setHeader('content-type', 'text/html');
+    res.end('<!doctype html><body style="font-family:system-ui;padding:2rem">FITBIT_CLIENT_ID env var not set in Vercel.</body>');
+    return;
+  }
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: CLIENT_ID,
