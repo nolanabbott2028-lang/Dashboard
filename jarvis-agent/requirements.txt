@@ -1,2 +1,3 @@
+av
 livekit-agents[deepgram,elevenlabs,google,silero]>=0.12.0,<0.13.0
 python-dotenv
